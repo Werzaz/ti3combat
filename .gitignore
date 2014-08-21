@@ -1,0 +1,10 @@
+*~
+\#*\#
+*.pkl
+*.ipynb
+old/
+.ipynb_checkpoints/
+.ropeproject/
+*.pyc
+todo
+TLP_Mentak_AFB.py
