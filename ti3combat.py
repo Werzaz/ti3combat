@@ -20,6 +20,9 @@ _Base_Values = {'WS': {'Type':'WS', 'Roll':3, 'Dice':3, 'HP':2,
                 'FT': {'Type':'FT', 'Roll':9, 'Dice':1, 'HP':1,
                        'MaxHP':1, 'Cost':.5, 'Evasion':0}}
 
+_unit_cost = {'WS': 12., 'DN': 5., 'CA': 2., 'DD': 1., 'CV': 3., 'FT': 0.5}
+_unit_available = {'WS': 2, 'DN': 5, 'CA': 8, 'DD': 8, 'CV': 4, 'FT': 1e6}
+
 def binom(n,k): 
     """Binomial coefficient (n k)"""
     return np.prod([float(n-k+i)/i for i in range(1,k+1)])
@@ -154,6 +157,17 @@ def BattleKey(Forces):
         out+=','
         out+=str(Forces[Key]['Rerolls'])
         if Key=='Attacker': out+=':'
+    return out
+
+def ShortKey(Forces,from_key=False):
+    """Make a shorter string containing
+    only the units. No inverse function available."""
+    if from_key:
+        Forces = InverseBattleKey(Forces)
+    out='|'.join([','.join([Name+''.join(['*' for k in range(Unit['MaxHP']-Unit['HP'])])
+                            for Name, Unit in sorted(Forces[Key]['Units'].items(),
+                                                     key=lambda x: x[0])])
+                  for Key in ['Attacker','Defender']])
     return out
 
 def InverseBattleKey(BattleKey):
@@ -652,21 +666,31 @@ def FullBattle(Ships,BattleDict=None,Tech=None):
                     n_dice = 2 * Ships[k]['DD']
                     roll = _Base_Values['DD']['Roll']
 
-                prop = dist(n_dice,1.1-roll/10.)[0]
+                prob = dist(n_dice,1.1-roll/10.)[0]
                 
                 if n_dice > Ships[1-k]['FT']:
                     prob = np.concatenate((prob[:Ships[1-k]['FT']],
-                                           np.array([np.sum(prob(Ships[1-k]['FT']:]))))
+                                           np.array([np.sum(prob[Ships[1-k]['FT']:])])))
 
                 NewBattles = []
-                for Battle in Battles:
+                for B in Battles:
                     for hits,p in enumerate(prob):
-                        NewBattle = (deepcopy(Battle[0]),Battle[1]*prob)
-                        NewBattle['FT'] -= hits
+                        NewBattle = (deepcopy(B[0]),B[1]*p)
+                        NewBattle[0][1-k]['FT'] -= hits
                         NewBattles.append(NewBattle)
                 Battles = deepcopy(NewBattles)
 
-    return Battles
+    out = {}
+    for B in Battles:
+        B_out = Battle(PrepareForces(*B[0]),BattleDict=BattleDict)
+        BattleDict = B_out[2]
+        for key, p in B_out[0].items():
+            if key in out.keys():
+                out[key] += B[1] * p
+            else:
+                out[key] = B[1] * p
+
+    return out, BattleDict
 
 def EasyOutcomes(a):
     out = []
@@ -680,6 +704,79 @@ def EasyOutcomes(a):
                  if (InverseBattleKey(b)['Defender']['Units']!={} 
                  and InverseBattleKey(b)['Attacker']['Units']=={})])]
     return out
+
+def check_fleet(units,res,fs,count):
+    if sum(units.values()) > count:
+        return False, 'Count'
+    elif sum([n for key, n in units.items() if key != 'FT']) > fs:
+        return False, 'FS'
+    elif sum([n*_unit_cost[key] for key, n in units.items()]) > res:
+        return False, 'Resources'
+    elif units['FT'] > 6 * units['CV']:
+        return False, 'Capacity'
+    else:
+        return True, 'OK'
+
+def design_fleet(res,fs,count,no_CV_wo_FT=True):
+    units = [{'WS': 0, 'DN': 0, 'CA': 0, 'DD': 0, 'CV': 0, 'FT': 0}]
+    
+    for unit_type in ['WS','DN','CV','CA','DD']:
+        new_units = []
+        for k in range(0,1 + min(int(res/_unit_cost[unit_type]),
+                                 fs,
+                                 count,
+                                 _unit_available[unit_type])):
+            for unit in units:
+                new = deepcopy(unit)
+                new[unit_type] = k
+                if check_fleet(new,res,fs,count)[0]:
+                    new_units.append(new)
+        units = deepcopy(new_units)
+    
+    for unit in units:
+        FTs = min(count - sum(unit.values()),
+                  int((res - sum([n*_unit_cost[key] for key, n in unit.items()])) 
+                      / _unit_cost['FT']),
+                  6 * unit['CV'])
+        FTs = (FTs / 2) * 2
+        unit['FT'] = FTs
+        
+    if no_CV_wo_FT:    
+        new_units = []
+        for unit in units:
+            OK = True
+            if unit['CV'] > (unit['FT'] - 1) / 6 + 1:
+                OK = False
+            if OK:
+                new_units.append(deepcopy(unit))
+        units = deepcopy(new_units)
+                
+    new_units = []
+    for k,unit1 in enumerate(units):
+        included = False
+        for unit2 in units[:k]+units[k+1:]:
+            if False not in [(unit1[key] <= unit2[key]) 
+                             or (unit1[key] == 0 and unit2[key] == 0) 
+                             for key in unit1.keys()]:
+                included = True
+                break
+        if not included:
+            new_units.append(deepcopy(unit1))
+    
+    return new_units
+
+def ultimate_fleet(res,fs,count,no_CV_wo_FT=True,BattleDict=None):
+    Fleets =  design_fleet(res,fs,count,
+                           no_CV_wo_FT=no_CV_wo_FT)
+
+    out = {}
+    for k, Fleet1 in enumerate(Fleets[:-1]):
+        for l, Fleet2 in enumerate(Fleets[k+1:]):
+            B_out = FullBattle((Fleet1,Fleet2),BattleDict=BattleDict)
+            BattleDict = B_out[1]
+            out[(k,l+k+1)] = B_out[0]
+    
+    return out, Fleets, BattleDict
 
 ## def print_Battle(ANum, ARoll, DNum, DRoll,Dict=False,BattleDict={}):
 ##     a,b,c,d=Battle(ANum, ARoll, DNum, DRoll,BattleDict=BattleDict)
