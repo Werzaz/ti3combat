@@ -7,6 +7,19 @@ import sys
 import cPickle as Pickle
 from copy import deepcopy
 
+_Base_Values = {'WS': {'Type':'WS', 'Roll':3, 'Dice':3, 'HP':2,
+                       'MaxHP':2, 'Cost':12., 'Evasion':0},
+                'DN': {'Type':'DN', 'Roll':5, 'Dice':1, 'HP':2,
+                       'MaxHP':2, 'Cost':5., 'Evasion':0},
+                'CA': {'Type':'CA', 'Roll':7, 'Dice':1, 'HP':1,
+                       'MaxHP':1, 'Cost':2., 'Evasion':0},
+                'DD': {'Type':'DD', 'Roll':9, 'Dice':1, 'HP':1,
+                       'MaxHP':1, 'Cost':1., 'Evasion':0},
+                'CV': {'Type':'CV', 'Roll':9, 'Dice':1, 'HP':1,
+                       'MaxHP':1, 'Cost':3., 'Evasion':0},
+                'FT': {'Type':'FT', 'Roll':9, 'Dice':1, 'HP':1,
+                       'MaxHP':1, 'Cost':.5, 'Evasion':0}}
+
 def binom(n,k): 
     """Binomial coefficient (n k)"""
     return np.prod([float(n-k+i)/i for i in range(1,k+1)])
@@ -580,18 +593,6 @@ def ResCost(Forces, Outcome):
     return cost_res
 
 def PrepareForces(Ships_Att,Ships_Def):
-    Base_Values = {'WS': {'Type':'WS', 'Roll':3, 'Dice':3, 'HP':2,
-                          'MaxHP':2, 'Cost':12., 'Evasion':0},
-                   'DN': {'Type':'DN', 'Roll':5, 'Dice':1, 'HP':2,
-                          'MaxHP':2, 'Cost':5., 'Evasion':0},
-                   'CA': {'Type':'CA', 'Roll':7, 'Dice':1, 'HP':1,
-                          'MaxHP':1, 'Cost':2., 'Evasion':0},
-                   'DD': {'Type':'DD', 'Roll':9, 'Dice':1, 'HP':1,
-                          'MaxHP':1, 'Cost':1., 'Evasion':0},
-                   'CV': {'Type':'CV', 'Roll':9, 'Dice':1, 'HP':1,
-                          'MaxHP':1, 'Cost':3., 'Evasion':0},
-                   'FT': {'Type':'FT', 'Roll':9, 'Dice':1, 'HP':1,
-                          'MaxHP':1, 'Cost':.5, 'Evasion':0}}
     Dmg_Default = ['FT','DD','CA','CV','DN','WS']
     
     Forces={'Space':True}
@@ -605,7 +606,7 @@ def PrepareForces(Ships_Att,Ships_Def):
     Units_Att = {}
     for Type, Number in Ships_Att.items():
         for k in range(1,Number+1):
-            Units_Att['{}{}'.format(Type,k)] = deepcopy(Base_Values[Type])
+            Units_Att['{}{}'.format(Type,k)] = deepcopy(_Base_Values[Type])
     Forces['Attacker']['Units'] = Units_Att
 
     Dmg_Att = []
@@ -619,7 +620,7 @@ def PrepareForces(Ships_Att,Ships_Def):
     Units_Def = {}
     for Type, Number in Ships_Def.items():
         for k in range(1,Number+1):
-            Units_Def['{}{}'.format(Type,k)] = deepcopy(Base_Values[Type])
+            Units_Def['{}{}'.format(Type,k)] = deepcopy(_Base_Values[Type])
     Forces['Defender']['Units'] = Units_Def
 
     Dmg_Def = []
@@ -631,6 +632,41 @@ def PrepareForces(Ships_Att,Ships_Def):
     Forces['Defender']['DmgOrder'] = Dmg_Def
 
     return Forces
+
+def FullBattle(Ships,BattleDict=None,Tech=None):
+    """
+    Ships = (Ships_Att, Ships_Def)
+    """
+    Battles = [(Ships,1)]
+    if Tech is None:
+        Tech = ([],[])
+    
+    # Attacker AFB
+    for k in range(2):
+        if 'DD' in Ships[k].keys() and 'FT' in Ships[1-k].keys():
+            if Ships[k]['DD'] > 0 and Ships[1-k]['FT'] > 0:
+                if 'ATD' in Tech[k]:
+                    n_dice = 3 * Ships[k]['DD']
+                    roll = _Base_Values['DD']['Roll'] + 2
+                else:
+                    n_dice = 2 * Ships[k]['DD']
+                    roll = _Base_Values['DD']['Roll']
+
+                prop = dist(n_dice,1.1-roll/10.)[0]
+                
+                if n_dice > Ships[1-k]['FT']:
+                    prob = np.concatenate((prob[:Ships[1-k]['FT']],
+                                           np.array([np.sum(prob(Ships[1-k]['FT']:]))))
+
+                NewBattles = []
+                for Battle in Battles:
+                    for hits,p in enumerate(prob):
+                        NewBattle = (deepcopy(Battle[0]),Battle[1]*prob)
+                        NewBattle['FT'] -= hits
+                        NewBattles.append(NewBattle)
+                Battles = deepcopy(NewBattles)
+
+    return Battles
 
 def EasyOutcomes(a):
     out = []
