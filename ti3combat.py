@@ -7,6 +7,8 @@ import sys
 import cPickle as Pickle
 from copy import deepcopy
 
+VERBOSE = True
+
 def binom(n,k): 
     """Binomial coefficient (n k)"""
     return np.prod([float(n-k+i)/i for i in range(1,k+1)])
@@ -141,6 +143,17 @@ def BattleKey(Forces):
         out+=','
         out+=str(Forces[Key]['Rerolls'])
         if Key=='Attacker': out+=':'
+    return out
+
+def ShortKey(Forces,from_key=False):
+    """Make a shorter string containing
+    only the units. No inverse function available."""
+    if from_key:
+        Forces = InverseBattleKey(Forces)
+    out='|'.join([','.join([Name+''.join(['*' for k in range(Unit['MaxHP']-Unit['HP'])])
+                            for Name, Unit in sorted(Forces[Key]['Units'].items(),
+                                                     key=lambda x: x[0])])
+                  for Key in ['Attacker','Defender']])
     return out
 
 def InverseBattleKey(BattleKey):
@@ -378,7 +391,7 @@ def Resolve_Round(Forces, Casualties, STs=[0,0],MinGF4ST=0,
             out0[k][1] += outcome[1]
     return out0
 
-def Battle(Forces, FctCalls=0, BattleDict=None):
+def Battle(Forces, FctCalls=0, BattleDict=None, previous=None):
     """Main function to resolve a battle.
 
     Arguments:
@@ -397,10 +410,34 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
     if BattleDict is None:
         BattleDict = {}
 
+    if previous is None:
+        previous = [BattleKey(Forces)]
+    else:
+        previous.append(BattleKey(Forces))
+
+    if VERBOSE:
+        print 'Resolving Battle {}'.format(ShortKey(Forces))
+        if len(previous) > 1:
+            print 'Previous Forces:'
+            for Key2 in previous[:-1]:
+                print ShortKey(Key2,from_key=True)
+        else:
+            print 'No previous Forces.'
+        #print 'Function calls {}'.format(FctCalls) 
+        print '---'
+
     # If Battle previously calculated, return those results:
     if BattleKey(Forces) in BattleDict.keys():
+        if VERBOSE:
+            print 'Result found in BattleDict'
+            if len(previous) > 1:
+                print 'Returning to {}'.format(ShortKey(previous[-2],from_key=True))
+                print '<<<'
+                print
+            else:
+                print 'Done'
         return (BattleDict[BattleKey(Forces)], FctCalls+1, BattleDict, 
-                ResCost(Forces,BattleDict[BattleKey(Forces)]))
+                ResCost(Forces,BattleDict[BattleKey(Forces)]),{})
 
     # Check for Bonus
     if 1 in [a[1] for a in  Forces['Attacker']['Bonus']]:
@@ -512,13 +549,61 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
         nohits /= (1-results[BattleKey(Forces)])
 
     out = {}
+    loops = {}
+    nochange = 0
     for rKey in results.keys():
         if rKey!=BattleKey(Forces):
             p = results[rKey]
             result = InverseBattleKey(rKey)
-            if (result['Attacker']['Units'].keys()!=[] and 
+            if VERBOSE:
+                print 'Processing round outcome: {}'.format(ShortKey(result)) 
+                print 'Current Forces: {}'.format(ShortKey(Forces))
+                if len(previous) > 1:
+                    print 'Previous Forces:'
+                    for Key2 in previous[:-1]:
+                        print ShortKey(Key2,from_key=True)
+                else:
+                    print 'No previous Forces.'
+                #print '---'
+            if rKey in previous:
+                if VERBOSE:
+                    print 'Previously encountered: {}'.format(ShortKey(result))
+                    print 'Currently known loops:'
+                    for Key2, p2 in loops.items():
+                        print ShortKey(Key2,from_key=True), p2
+                    print
+                loops[rKey] = nohits * p
+            elif (result['Attacker']['Units'].keys()!=[] and 
                 result['Defender']['Units'].keys()!=[]):
-                New=Battle(result,BattleDict=BattleDict)
+                if VERBOSE:
+                    print 'Calculating new battle for {}'.format(ShortKey(result))
+                    print '>>>'
+                    print
+                New=Battle(result,BattleDict=BattleDict,previous=previous)
+                for BKey in New[4].keys():
+                    #print ShortKey(rKey,from_key=True)
+                    if BKey==BattleKey(Forces):
+                        if VERBOSE:
+                            print 'Forces match found in loop: {}'.format(ShortKey(BKey,from_key=True))
+                            print 'Currently known loops:'
+                            for Key2, p2 in loops.items():
+                                print ShortKey(Key2,from_key=True), p2
+                            #print '---'
+                        nochange += nohits * p * New[4][BKey]
+                    else:
+                        if VERBOSE:
+                            print 'Loop does not match Forces: {}'.format(ShortKey(BKey,from_key=True))
+                        if BKey not in loops.keys():                                
+                            loops[BKey] = nohits * p * New[4][BKey]
+                        else:
+                            if VERBOSE:
+                                print 'Loop duplication'
+                            loops[BKey] += nohits * p * New[4][BKey]
+                        if VERBOSE:
+                            print 'Currently known loops:'
+                            for Key2, p2 in loops.items():
+                                print ShortKey(Key2,from_key=True), p2
+                            #print '---'
                 for BKey in New[0].keys():
                     if BKey not in out.keys():
                         out[BKey] = nohits * p * New[0][BKey]
@@ -530,16 +615,32 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
                 for Key in NewBattles:
                     BattleDict[Key]=NewBattles[Key]
             else:
+                if VERBOSE:
+                    print 'End of Tree.'
                 if rKey not in out.keys():
                     out[rKey] = nohits * p
                 else:
                     out[rKey] += nohits * p
-                    
+            if VERBOSE:
+                print '---'
+
+    for rKey in out.keys():
+        out[rKey] /= (1-nochange) 
+                  
     BattleDict[BattleKey(Forces)] = out 
     
     cost_res = ResCost(Forces,out)
 
-    return out, FctCalls+1, BattleDict, cost_res
+    if VERBOSE:
+        print 'Battle fully resolved: {}'.format(ShortKey(Forces))
+        if len(previous) > 1:
+            print 'Returning to {}'.format(ShortKey(previous[-2],from_key=True))
+            print '<<<'
+            print
+        else:
+            print 'Done'
+
+    return out, FctCalls+1, BattleDict, cost_res, loops
 
 def NiceOut(Lines,Alignment):
     """Nicely aligned output.
