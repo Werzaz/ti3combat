@@ -174,6 +174,17 @@ def ShortKey(Forces,from_key=False):
                   for Key in ['Attacker','Defender']])
     return out
 
+def ShortKey(Forces,from_key=False):
+    """Make a shorter string containing 
+    only the units. No inverse function available."""
+    if from_key:
+        Forces = InverseBattleKey(Forces)
+    out='|'.join([','.join([Name+''.join(['*' for k in range(Unit['MaxHP']-Unit['HP'])]) 
+                            for Name, Unit in sorted(Forces[Key]['Units'].items(), 
+                                                     key=lambda x: x[0])])
+                  for Key in ['Attacker','Defender']])
+    return out
+
 def InverseBattleKey(BattleKey):
     """Invert BattleKey()."""
     SubKeys=['Roll','Dice','HP','MaxHP','Cost','Evasion']
@@ -243,6 +254,8 @@ def Resolve_Round(Forces, Casualties, STs=[0,0],MinGF4ST=0,
                     temp[2]+=[outcome[2]]
                 else: Success = False
                 while not Success:
+                    #print k,outcome[0][Key]['DmgOrder']
+                    #print outcome[0][Key]['Units'].keys()
                     Target=outcome[0][Key]['DmgOrder'][k]
                     # First check for Merc
                     if outcome[0][Key]['Units'][Target]['Type']=='Merc':
@@ -407,9 +420,10 @@ def Resolve_Round(Forces, Casualties, STs=[0,0],MinGF4ST=0,
         else:
             k = [a[0] for a in out0].index(outcome[0])
             out0[k][1] += outcome[1]
+
     return out0
 
-def Battle(Forces, FctCalls=0, BattleDict=None):
+def Battle(Forces, FctCalls=0, BattleDict=None, previous=None):
     """Main function to resolve a battle.
 
     Arguments:
@@ -420,6 +434,8 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
     Keyword arguments:
     FctCalls   -- number of previous function calls to assess the effort.
     BattleDict -- dictionary for all smaller battles.
+    previous   -- internal list that keeps track of previous force
+                  (used to avoid Duranium Armor loops)
 
     TODO:
     - Ground Battles
@@ -427,6 +443,11 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
     """
     if BattleDict is None:
         BattleDict = {}
+    
+    if previous is None:
+        previous = [BattleKey(Forces)]
+    else:
+        previous.append(BattleKey(Forces))
 
     # If Battle previously calculated, return those results:
     if BattleKey(Forces) in BattleDict.keys() :
@@ -536,20 +557,34 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
                         else:
                             results[BKey] += (ADist[k,l] * DDist[m,n] 
                                               * outcome[1])
- 
+    #return results
+
     # Probability of no hits ad inifinitum
     nohits = 1
     if BattleKey(Forces) in results.keys():
         nohits /= (1-results[BattleKey(Forces)])
 
     out = {}
+    # loops = {}
+    # nochange = 0
     for rKey in results.keys():
         if rKey!=BattleKey(Forces):
             p = results[rKey]
             result = InverseBattleKey(rKey)
+            # if rKey in previous:
+            #     loops[rKey] = nohits * p
             if (result['Attacker']['Units'].keys()!=[] and 
                 result['Defender']['Units'].keys()!=[]):
-                New=Battle(result,BattleDict=BattleDict)
+                New=Battle(result,BattleDict=BattleDict,previous=previous)
+                # for BKey in New[4].keys():
+                #     #print ShortKey(rKey,from_key=True)
+                #     if BKey==BattleKey(Forces):
+                #         nochange += nohits * p * New[4][BKey]
+                #     else:
+                #         if BKey not in loops.keys():
+                #             loops[BKey] = nohits * p * New[4][BKey]
+                #         else:
+                #             loops[BKey] += nohits * p * New[4][BKey]
                 for BKey in New[0].keys():
                     if BKey not in out.keys():
                         out[BKey] = nohits * p * New[0][BKey]
@@ -566,11 +601,14 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
                 else:
                     out[rKey] += nohits * p
                     
+    # for rKey in out.keys():
+    #         out[rKey] /= (1-nochange)
+
     BattleDict[BattleKey(Forces)] = out 
     
     cost_res = ResCost(Forces,out)
 
-    return out, FctCalls+1, BattleDict, cost_res
+    return out, FctCalls+1, BattleDict, cost_res, # loops
 
 def NiceOut(Lines,Alignment):
     """Nicely aligned output.
