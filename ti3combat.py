@@ -129,12 +129,16 @@ def Probabilities(Rolls,GFs=[],Rerolls=0):
                 out[STs+STs_r,Hits+Hits_r]+=p*p2
     return out
 
-def BattleKey(Forces):
+def BattleKey(Forces,reverse=False):
     """Make a single string containing 
     all information of the Forces dictionary."""
     if Forces['Space']: out='Space:'
     else: out='Ground:'
-    for Key in ['Attacker','Defender']:
+    if not reverse:
+        PlayerKeys = ['Attacker','Defender']
+    else:
+        PlayerKeys = ['Defender','Attacker']
+    for Key in PlayerKeys:
         for SubKey in ['Tech','DmgOrder','RepairOrder']:
             for k,item in enumerate(Forces[Key][SubKey]):
                 if k<len(Forces[Key][SubKey])-1: out+=item+';'
@@ -156,7 +160,7 @@ def BattleKey(Forces):
             if k<len(Forces[Key]['Special'])-1: out+=';'
         out+=','
         out+=str(Forces[Key]['Rerolls'])
-        if Key=='Attacker': out+=':'
+        if Key==PlayerKeys[0]: out+=':'
     return out
 
 def ShortKey(Forces,from_key=False):
@@ -425,7 +429,7 @@ def Battle(Forces, FctCalls=0, BattleDict=None):
         BattleDict = {}
 
     # If Battle previously calculated, return those results:
-    if BattleKey(Forces) in BattleDict.keys():
+    if BattleKey(Forces) in BattleDict.keys() :
         return (BattleDict[BattleKey(Forces)], FctCalls+1, BattleDict, 
                 ResCost(Forces,BattleDict[BattleKey(Forces)]))
 
@@ -763,7 +767,13 @@ def design_fleet(res,fs,count,no_CV_wo_FT=True):
         if not included:
             new_units.append(deepcopy(unit1))
     
-    return new_units
+    units = deepcopy(new_units)
+    for unit_type in ['FT','DD','CA','CV','DN','WS']:
+        units = sorted(units, key=lambda x: x[unit_type])
+    
+    units = units[::-1]
+
+    return units
 
 def ultimate_fleet(res,fs,count,no_CV_wo_FT=True,BattleDict=None):
     Fleets =  design_fleet(res,fs,count,
